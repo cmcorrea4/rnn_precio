@@ -1,4 +1,6 @@
+import hashlib
 import json
+import tempfile
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -16,29 +18,52 @@ plt.rcParams["figure.dpi"] = 110
 # Carga del modelo y la escala generados en el Colab
 # ------------------------------------------------------------------
 @st.cache_resource
-def cargar_modelo():
+def cargar_modelo(huella, _datos):
+    """Keras necesita una ruta: se escribe el archivo en una carpeta temporal."""
     from tensorflow import keras
-    return keras.models.load_model(BASE / "modelo_rnn.keras")
+    ruta = Path(tempfile.gettempdir()) / f"modelo_{huella}.keras"
+    if not ruta.exists():
+        ruta.write_bytes(_datos)
+    return keras.models.load_model(ruta)
 
 
-@st.cache_data
-def cargar_escala():
-    with open(BASE / "escala.json") as f:
-        return json.load(f)
+with st.sidebar:
+    st.header("Modelo del Colab")
+    st.caption("Sube los archivos de la sección 6. Despliegue. Si no subes nada, "
+               "se usan los que están en el repositorio.")
+    up_modelo = st.file_uploader("modelo_rnn.keras", type=["keras"])
+    up_escala = st.file_uploader("escala.json", type=["json"])
 
-
-faltan = [n for n in ("modelo_rnn.keras", "escala.json") if not (BASE / n).exists()]
-if faltan:
-    st.error(
-        "No se encontraron " + ", ".join(faltan) + ". Descárgalos del Colab (sección 6. Despliegue) "
-        "y súbelos a la misma carpeta de app.py en el repositorio."
+if up_modelo is not None and up_escala is not None:
+    datos_modelo = up_modelo.getvalue()
+    escala = json.loads(up_escala.getvalue())
+    origen = "archivos subidos"
+elif (BASE / "modelo_rnn.keras").exists() and (BASE / "escala.json").exists():
+    datos_modelo = (BASE / "modelo_rnn.keras").read_bytes()
+    escala = json.loads((BASE / "escala.json").read_text())
+    origen = "repositorio"
+else:
+    st.title("Redes neuronales recurrentes: el precio de una acción")
+    st.warning(
+        "Sube **modelo_rnn.keras** y **escala.json** en la barra lateral "
+        "(los descargas del Colab, sección 6. Despliegue)."
     )
     st.stop()
 
-escala = cargar_escala()
+faltan = [k for k in ("p_min", "p_max", "ventana") if k not in escala]
+if faltan:
+    st.error("El archivo escala.json no tiene: " + ", ".join(faltan))
+    st.stop()
+
+HUELLA = hashlib.md5(datos_modelo).hexdigest()[:10]
 P_MIN, P_MAX, VENTANA = escala["p_min"], escala["p_max"], int(escala["ventana"])
-with st.spinner("Cargando el modelo entrenado en el Colab…"):
-    modelo = cargar_modelo()
+try:
+    with st.spinner("Cargando el modelo entrenado en el Colab…"):
+        modelo = cargar_modelo(HUELLA, datos_modelo)
+except Exception as e:
+    st.error(f"No se pudo cargar el modelo: {e}")
+    st.stop()
+st.sidebar.success(f"Modelo cargado desde: {origen}")
 capa_rnn = modelo.layers[0]
 UNIDADES = capa_rnn.units
 
@@ -66,7 +91,7 @@ X_test, y_test = X[N_TRAIN:], y[N_TRAIN:]
 
 
 @st.cache_data
-def evaluar():
+def evaluar(huella):
     est = desescalar(modelo.predict(X_test, verbose=0).ravel())
     real = desescalar(y_test)
     base = desescalar(X_test[:, -1, 0])
@@ -351,7 +376,7 @@ with t4:
 
 # ---------------- 5. Evaluación ----------------
 with t5:
-    est, real, base = evaluar()
+    est, real, base = evaluar(HUELLA)
     mae_rnn = np.mean(np.abs(est - real)); mae_base = np.mean(np.abs(base - real))
     st.markdown(
         f"Comparamos el modelo con una **línea base** muy simple: *el precio de mañana será igual al de hoy*. "
