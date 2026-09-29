@@ -64,8 +64,7 @@ except Exception as e:
     st.error(f"No se pudo cargar el modelo: {e}")
     st.stop()
 st.sidebar.success(f"Modelo cargado desde: {origen}")
-capa_rnn = modelo.layers[0]
-UNIDADES = capa_rnn.units
+UNIDADES = modelo.layers[0].units
 
 escalar = lambda v: (np.asarray(v) - P_MIN) / (P_MAX - P_MIN)
 desescalar = lambda v: np.asarray(v) * (P_MAX - P_MIN) + P_MIN
@@ -98,13 +97,13 @@ def evaluar(huella):
     return est, real, base
 
 
-def preguntas(lista):
-    st.markdown("**Preguntas para responder**")
-    st.markdown("\n".join(f"{i}. {q}" for i, q in enumerate(lista, 1)))
-
-
 def que_probar(lista):
     st.info("**Qué probar**\n\n" + "\n".join(f"- {q}" for q in lista))
+
+
+def cierre(conclusion, pregunta):
+    st.success("**Conclusión**\n\n" + conclusion)
+    st.markdown(f"**Pregunta:** {pregunta}")
 
 
 def dibujar_rnn(unidades=8, ventana=5):
@@ -198,12 +197,12 @@ def dibujar_rnn(unidades=8, ventana=5):
 # Interfaz
 # ------------------------------------------------------------------
 st.title("Redes neuronales recurrentes: el precio de una acción")
-st.caption("Compañera del Colab. El modelo de las pestañas 4 a 6 es el que entrenaste y guardaste en el Colab. "
+st.caption("Compañera del Colab. El modelo de las pestañas 4 y 5 es el que entrenaste y guardaste en el Colab. "
            "Es un ejemplo educativo: no sirve para decisiones de inversión.")
 
-t1, t2, t3, t4, t5, t6 = st.tabs([
+t1, t2, t3, t4, t5 = st.tabs([
     "1. Datos y ventanas", "2. Una neurona", "3. Estructura de la red",
-    "4. Pesos del modelo", "5. Evaluación", "6. Estimar el día siguiente",
+    "4. Evaluación", "5. Estimar el día siguiente",
 ])
 
 # ---------------- 1. Datos y ventanas ----------------
@@ -234,19 +233,20 @@ with t1:
     c2.metric("Ventanas de entrenamiento", f"{CORTE} − {VENTANA} = {N_TRAIN}")
     c3.metric("Ventanas de prueba", len(X_test))
     st.markdown(
-        f"Las ventanas **se deslizan de a un día** y se traslapan; no son bloques separados. La última ventana "
-        f"de entrenamiento usa los días {N_TRAIN} a {CORTE - 1} para estimar el día {CORTE}. Por eso la forma de "
+        f"Las ventanas **se deslizan de a un día** y se traslapan; no son bloques separados. Por eso la forma de "
         f"los datos es `({N_TRAIN}, {VENTANA}, 1)`: {N_TRAIN} ventanas, {VENTANA} días cada una, 1 variable (el precio)."
     )
     que_probar([
         "Mueve la ventana de a un día y fíjate cuántos días comparte con la anterior.",
         "Lleva la ventana hasta el final de la zona blanca: ¿dónde queda su respuesta?",
     ])
-    preguntas([
+    cierre(
+        "Una red no recibe la serie completa: la serie se corta en **ventanas** que se deslizan de a un día. "
+        "Cada ventana es una pregunta (los precios de varios días) y su respuesta es el precio del día siguiente. "
+        "Al deslizarlas se obtienen muchos ejemplos con pocos datos. La parte de prueba va **al final** "
+        "porque así se simula lo que pasa en la realidad: aprender del pasado para estimar el futuro.",
         f"Si hubiera 100 días de entrenamiento y ventanas de {VENTANA} días, ¿cuántas ventanas saldrían?",
-        f"¿Cuántas ventanas saldrían si las cortáramos en bloques sin traslapar? ¿Por qué conviene deslizarlas?",
-        "¿Por qué la zona de prueba está al final y no mezclada con el entrenamiento?",
-    ])
+    )
 
 # ---------------- 2. Una neurona ----------------
 with t2:
@@ -296,11 +296,12 @@ with t2:
         "Intenta bajar el MSE a mano moviendo los deslizadores. Con entrenamiento se llega a 0.0045.",
         "Pon w_x en 0: ¿qué información le queda a la neurona?",
     ])
-    preguntas([
-        "¿Qué representa h y por qué h₀ vale 0?",
-        "¿Por qué los pesos son los mismos en los tres días?",
-        "¿Qué tan difícil fue bajar el MSE a mano? ¿Qué resuelve la retropropagación?",
-    ])
+    cierre(
+        "La neurona recurrente lee **un día a la vez** y guarda en **h** un resumen de lo que ha visto: esa es su "
+        "memoria. En cada día combina el precio nuevo con la memoria del día anterior, siempre con **los mismos pesos**. "
+        "Encontrar buenos pesos a mano es difícil; el entrenamiento lo hace de forma automática.",
+        "¿Qué pasa con la memoria de la neurona cuando w_h vale 0?",
+    )
 
 # ---------------- 3. Estructura ----------------
 with t3:
@@ -325,57 +326,16 @@ with t3:
         "Pasa de 8 a 16 neuronas: ¿cuánto crecen los parámetros?",
         "Cambia la ventana de 5 a 20 días: ¿cambia el total de parámetros?",
     ])
-    preguntas([
-        "¿Por qué los parámetros no dependen del tamaño de la ventana?",
-        "¿Por qué el término n × n hace crecer tan rápido la cantidad de parámetros?",
-        "¿Por qué solo el h del último día llega a la capa Dense?",
-    ])
-
-# ---------------- 4. Pesos del modelo ----------------
-with t4:
-    kernel, rec, bias = capa_rnn.get_weights()
-    w_dense, b_dense = modelo.layers[-1].get_weights()
-    st.markdown(
-        f"Estos son los valores reales que aprendió tu modelo en el Colab. El mapa muestra los "
-        f"**{UNIDADES} × {UNIDADES} = {UNIDADES * UNIDADES} pesos w_h**: cuánto escucha cada neurona de hoy "
-        f"(columna) a cada memoria de ayer (fila), igual que el `recurrent_kernel` de Keras."
+    cierre(
+        "Una RNN es **una sola capa de neuronas que se reutiliza** en cada día de la ventana. Por eso la cantidad "
+        "de parámetros depende del número de neuronas, pero **no del tamaño de la ventana**. Durante la ventana la "
+        "capa solo va actualizando su memoria, y únicamente la memoria del **último día** pasa a la capa Dense, "
+        "que da la estimación.",
+        "Si la ventana pasa de 5 a 20 días, ¿cambia la cantidad de parámetros?",
     )
-    fig, ax = plt.subplots(figsize=(7, 5.6))
-    lim = np.abs(rec).max()
-    im = ax.imshow(rec, cmap="RdBu_r", vmin=-lim, vmax=lim)
-    ax.set_xticks(range(UNIDADES), [f"n{j + 1} hoy" for j in range(UNIDADES)], rotation=45, ha="right")
-    ax.set_yticks(range(UNIDADES), [f"h{i + 1} ayer" for i in range(UNIDADES)])
-    if UNIDADES <= 12:
-        for i in range(UNIDADES):
-            for j in range(UNIDADES):
-                ax.text(j, i, f"{rec[i, j]:.2f}", ha="center", va="center", fontsize=8)
-    fig.colorbar(im, ax=ax, shrink=0.8, label="peso")
-    ax.set_title("Pesos de memoria w_h")
-    c1, c2 = st.columns([3, 2])
-    c1.pyplot(fig); plt.close(fig)
-    with c2:
-        st.markdown("**Por neurona**")
-        st.dataframe(pd.DataFrame({
-            "Neurona": [f"n{i + 1}" for i in range(UNIDADES)],
-            "w_x": kernel[0].round(3),
-            "b": bias.round(3),
-            "w_h consigo misma": np.diag(rec).round(3),
-            "Peso en Dense": w_dense[:, 0].round(3),
-        }), hide_index=True, width="stretch")
-        st.markdown(f"Sesgo de Dense: `{b_dense[0]:.3f}`")
-    que_probar([
-        "Busca la diagonal del mapa: cuánto se acuerda cada neurona de sí misma.",
-        "Busca los colores más intensos: son las conexiones que más pesan.",
-        "Compara la columna 'Peso en Dense': ¿qué neuronas influyen más en la estimación final?",
-    ])
-    preguntas([
-        "¿Qué diferencia hay entre los pesos de la diagonal y los de fuera de ella?",
-        "Si entrenas de nuevo en el Colab con otra semilla, ¿esperas los mismos pesos? ¿Por qué?",
-        "¿Cuántos números hay en total en esta pestaña? ¿Coinciden con modelo.summary()?",
-    ])
 
-# ---------------- 5. Evaluación ----------------
-with t5:
+# ---------------- 4. Evaluación ----------------
+with t4:
     est, real, base = evaluar(HUELLA)
     mae_rnn = np.mean(np.abs(est - real)); mae_base = np.mean(np.abs(base - real))
     st.markdown(
@@ -398,14 +358,18 @@ with t5:
         "Activa la línea base y compárala con la RNN: ¿se parecen?",
         "Fíjate en los días con saltos grandes: ¿la RNN los anticipa o llega tarde?",
     ])
-    preguntas([
-        "¿La RNN le gana a la línea base? ¿Qué dice eso sobre qué tan predecible es el precio de una acción?",
-        "¿Por qué la estimación parece ir un día 'detrás' del precio real?",
-        "¿Por qué es importante comparar contra una línea base antes de decir que un modelo funciona?",
-    ])
+    ganador = "la RNN" if mae_rnn < mae_base else "la línea base"
+    cierre(
+        f"En este modelo el menor error lo tuvo **{ganador}** (${min(mae_rnn, mae_base):.2f} frente a "
+        f"${max(mae_rnn, mae_base):.2f}). Los precios de este ejemplo cambian al azar cada día, así que no hay un "
+        "patrón que aprender: la mejor estimación es casi el precio de hoy. Por eso la RNN termina copiando el último "
+        "precio y su curva parece ir **un día detrás** de la real. La lección: un modelo solo sirve si le gana a una "
+        "línea base sencilla.",
+        "¿Cuál tuvo menor error: la RNN o la línea base?",
+    )
 
-# ---------------- 6. Estimar ----------------
-with t6:
+# ---------------- 5. Estimar ----------------
+with t5:
     st.markdown(f"Escribe los precios de **{VENTANA} días seguidos** y el modelo del Colab calcula una estimación para el día siguiente.")
     cols = st.columns(VENTANA)
     entradas = [cols[i].number_input(f"Día {i + 1}", value=float(round(precios[-VENTANA + i], 2)), step=0.5, format="%.2f")
@@ -423,7 +387,10 @@ with t6:
         "Escribe cinco precios iguales: ¿qué estimación da?",
         "Escribe precios de 200 o de 20: ¿qué pasa fuera del rango de entrenamiento?",
     ])
-    preguntas([
-        "¿El modelo continúa las tendencias o se queda cerca del último precio?",
-        "¿Por qué no es buena idea usar este modelo con precios muy distintos a los del entrenamiento?",
-    ])
+    cierre(
+        "El modelo estima valores **cercanos al último precio**, con un ajuste pequeño según la tendencia, porque "
+        "eso fue lo que aprendió de los datos. Además, solo es confiable **dentro del rango de precios del "
+        f"entrenamiento** (${P_MIN:.2f} a ${P_MAX:.2f}): los precios se escalan siempre con ese mismo mínimo y "
+        "máximo, y lo que queda por fuera es algo que el modelo nunca vio.",
+        "Si escribes cinco precios iguales, ¿qué estimación da el modelo?",
+    )
